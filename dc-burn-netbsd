@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/bash -e
 
 # Copyright (c) 2012 David Brownlee (Standard 2 clause BSD licence)
 # All rights reserved.
@@ -25,15 +25,18 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-version=7.0.1
+PATH=$PATH:$(pwd)/bin
+
+version=7.1.2
 kernel_type=GENERIC_MD
 iso_image=data.raw
 tmpdir=dc-burn-netbsd-files
-opt_cdrecord="driveropts=burnfree gracetime=3"
+opt_wodim="driveropts=burnfree gracetime=3"
 
 base_sets="base.tgz etc.tgz"
 std_sets="$base_sets comp.tgz man.tgz misc.tgz modules.tgz tests.tgz text.tgz"
 x_sets="$std_sets xbase.tgz xcomp.tgz xetc.tgz xfont.tgz xserver.tgz"
+add_pkgs="https://ftp.netbsd.org/pub/pkgsrc/packages/NetBSD/dreamcast/7.0/comms/lrzsz-0.12.20nb1.tgz https://ftp.netbsd.org/pub/pkgsrc/packages/NetBSD/dreamcast/7.0/comms/gkermit-1.00nb1.tgz "
 
 download_sets()
 {
@@ -45,6 +48,19 @@ for f in $sets; do
     fetch_file_if_missing sets/$f $download_dir/$f
 done
 }
+
+########ADD
+download_pkgs()
+{
+download_dir=$1
+shift;
+pkgs="$*"
+[ -d $download_dir ] || mkdir $download_dir
+for f in $pkgs; do
+    [ -f $download_dir/$(basename $f) ] && echo "$download_dir/$(basename $f): already present" || wget $f -P $download_dir
+done
+}
+########
 
 extract_sets_and_setup_live()
 {
@@ -191,6 +207,18 @@ fi
 
 }
 
+#########ADD
+extract_pkgs()
+{
+data_dir=$1
+sets_dir=$2
+shift ; shift
+for tarfile in $(dirname $sets_dir)/* ; do
+    $sudo tar xpzvf $tarfile -C $data_dir
+done
+}
+#########
+
 fatal()
 {
 echo "** $@" >&2
@@ -207,10 +235,12 @@ if [ ! -f $file ] ; then
     # Fall back to looking in NetBSD-archive
     if ! ftp -o - $dist_url > /dev/null ; then
 	echo "Switching to NetBSD-archive"
-	dist_url=http://ftp.netbsd.org/pub/NetBSD/NetBSD-archive/NetBSD-$version/dreamcast/binary
+	dist_url=http://ftp.netbsd.org/pub/NetBSD/NetBSD-$version/dreamcast/binary
     fi
-    ftp -o $file.tmp $dist_url/$remotefile
-    mv $file.tmp $file
+#### A modifier
+#    ftp -o $file.tmp $dist_url/$remotefile
+    wget $dist_url/$remotefile -P $(dirname $file)
+    #mv $file.tmp $file
 else
     echo "already present"
 fi
@@ -304,21 +334,21 @@ Game Title    : $ip_name
 END
 }
 
-run_cdrecord()
+run_wodim()
 {
-echo cdrecord "$@"
-$sudo cdrecord "$@"
+    echo wodim "$@"
+    $sudo wodim "$@"
 }
 
 #### main() start
 #
 
-while getopts CEbc:d:ehi:k:ls:t:v:x: f; do
+while getopts CEbc:d:ehi:k:ls:t:v:wx: f; do
     case $f in
         C)  opt_clean=-C ;;
 	E)  opt_extract=-E ;;
         b)  opt_burn=-b ;;
-        c)  opt_cdrecord="$OPTARG" ;;
+        c)  opt_wodim="$OPTARG" ;;
 	d)  opt_distdir="$OPTARG" ;;
         e)  opt_emulator=-e ;;
         h)  opt_show_help=-h ;;
@@ -365,8 +395,8 @@ if [ $# != 0 -o -n "$opt_show_help" ] ; then
     cat <<END
 Usage: dc-burn-netbsd [opts]
  -C      : Clean work directory before starting
- -b      : Burn generated image to CD using cdrecord
- -c opts : Set cdrecord opts ($opt_cdrecord)
+ -b      : Burn generated image to CD using wodim
+ -c opts : Set wodim opts ($opt_wodim)
  -d dist : Take kernel/ & sets/ under dist dir - will not try to download
  -e      : Boot resultant image under an emulator (requires gxemul)
  -h      : This help
@@ -395,7 +425,7 @@ if [ $(id -u) != 0 ] ; then
         echo "Warning: Not running as root - will use sudo to extract release"
     fi
     if [ -n "$opt_burn" ]; then
-        echo "Warning: Not running as root - will use sudo for cdrecord"
+        echo "Warning: Not running as root - will use sudo for wodim"
     fi
 fi
 
@@ -442,13 +472,23 @@ if [ -z "$opt_iso_image" ] ; then
             echo; echo ">> Download sets if needed"
             download_sets $distdir/sets $opt_sets
         fi
+#######ADD
+	if [ -n "$add_pkgs" ] ; then
+	    echo; echo ">> Download Packages if needed"
+	    download_pkgs $distdir/pkgs $add_pkgs
+	fi
+#######
     fi
 
     echo; echo ">> Generate the ip.txt file and use to create IP.BIN bootloader"
     prepare_ip_txt ip.txt NETBSD.BIN $version-$kernel_type
-    dc-makeip ip.txt ip.bin
+    cp ../IP.TMPL .
+    dc-makeip ip.txt IP.BIN
 
-    dist_details="$(ls -l $kernel $(echo $opt_sets | fmt 1 | sed "s:^:$distdir/sets/:"); echo extra_opts=$opt_live)"
+    #dist_details="$(ls -l $kernel $(echo $opt_sets | fmt 1 | sed "s:^:$distdir/sets/:"); echo extra_opts=$opt_live)"
+    #dist_details="$(ls $kernel $(echo $opt_sets | tr " " "\n" | sed "s:^:$distdir/sets/:"); echo extra_opts=$opt_live)"
+    dist_details="$(ls $kernel $(echo $opt_sets | tr " " "\n" | sed "s:^:$distdir/sets/:") $(echo $add_pkgs | tr " " "\n" | sed "s:^.*/:$distdir/pkgs/:"); echo extra_opts=$opt_live)"
+echo $dist_details
     if [ "$(test -f data/.dist && cat data/.dist)" = "$dist_details" ]; then
         echo "Contents of data already match requirements"
     else
@@ -465,12 +505,17 @@ if [ -z "$opt_iso_image" ] ; then
 	    echo; echo ">> Extract sets ($opt_sets)"
 	    extract_sets_and_setup_live data $distdir/sets $opt_sets
         fi
+        if [ -n "$add_pkgs" ] ; then
+            echo; echo ">> Extract pkgs ($add_pkgs)"
+            extract_pkgs data $distdir/pkgs/$(basename $add_pkgs)
+        fi
+
         echo "$dist_details" > data/.dist
     fi
 
     # 
     echo; echo ">> Create filesystem with boot loader"
-    cp ip.bin $iso_image
+    cp IP.BIN $iso_image
     ( cd data && $sudo mkisofs -quiet -R -l -C 0,11702 -o - . | \
       dd bs=2048 skip=16 ) >> $iso_image
 
@@ -491,8 +536,11 @@ if [ -n "$opt_burn" ] ; then
 
     echo; echo ">> Burn CD"
     echo "cd $tmpdir"
-    run_cdrecord $opt_cdrecord -multi -audio audio.raw
-    run_cdrecord $opt_cdrecord -multi -multi -xa -eject $iso_image
+    run_wodim $opt_wodim -multi -audio audio.raw
+    run_wodim $opt_wodim -multi -multi -xa -eject $iso_image
 fi
 
-rm ip.txt ip.bin
+rm ip.txt IP.BIN
+
+
+# vim: ft=sh et ts=4 sw=4
