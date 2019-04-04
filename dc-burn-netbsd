@@ -516,7 +516,7 @@ echo $dist_details
     # 
     echo; echo ">> Create filesystem with boot loader"
     cp IP.BIN $iso_image
-    ( cd data && $sudo mkisofs -quiet -R -l -C 0,11702 -o - . | \
+    ( cd data && $sudo genisoimage -quiet -R -l -C 0,11702 -o - . | \
       dd bs=2048 skip=16 ) >> $iso_image
 
     echo ""; echo "Bootable image generated as $tmpdir/$iso_image"
